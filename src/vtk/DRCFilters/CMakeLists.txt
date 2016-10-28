@@ -18,6 +18,7 @@ set(sources
 
   vtkDepthImageProcessingPass.cxx
   vtkEDLShading.cxx
+  vtkPOVExporter2.cxx
   )
 
 
