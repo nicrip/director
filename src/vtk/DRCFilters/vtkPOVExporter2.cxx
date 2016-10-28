@@ -243,6 +243,8 @@ void vtkPOVExporter2::WriteHeader(vtkRenderer *renderer)
   double *color = renderer->GetBackground();
   fprintf(this->FilePtr, "background { color rgb <%f, %f, %f>}\n\n", 
           color[0], color[1], color[2]); 
+
+  fprintf(this->FilePtr, "#include \"customize.inc\"\n\n");
 }
 
 void vtkPOVExporter2::WriteCamera(vtkCamera *camera)
@@ -267,10 +269,10 @@ void vtkPOVExporter2::WriteCamera(vtkCamera *camera)
   
   // make POVRay to use left handed system to right handed
   // TODO: aspect ratio
-  fprintf(this->FilePtr, "\tright <-1, 0, 0>\n");
+  fprintf(this->FilePtr, "\tright <-1*image_width/image_height, 0, 0>\n");
   //fprintf(this->FilePtr, "\tup <-1, 0, 0>\n");
   
-  fprintf(this->FilePtr, "\tangle %f\n", camera->GetViewAngle());
+  fprintf(this->FilePtr, "\tangle %f*image_width/image_height\n", camera->GetViewAngle());
   
   double *focal = camera->GetFocalPoint();
   fprintf(this->FilePtr, "\tlook_at <%f, %f, %f>\n", 
@@ -316,6 +318,11 @@ void vtkPOVExporter2::WriteActor(vtkActor *actor)
     return;
     }
   
+  if (!actor->GetVisibility() || actor->GetProperty()->GetOpacity() == 0.0)
+    {
+    return;
+    }
+
   // write geometry, first ask the pipeline to update data
   vtkDataSet *dataset = NULL;
   vtkSmartPointer<vtkDataSet> tempDS;
