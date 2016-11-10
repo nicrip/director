@@ -248,8 +248,19 @@ ip = mytaskpanel.iiwaplanning
 affordanceName = 'blue funnel'
 ip.spawnAffordance(affordanceName)
 ip.addGraspFrames(affordanceName)
-ip.makeBestPlan(affordanceName)
-addToolBarAction('Random test', ip.randomTest)
+#ip.makeBestPlan(affordanceName)
+#addToolBarAction('Random test', ip.randomTest)
 
+def syncFunnel():
+    simObj = om.findObjectByName('blue_funnel geometry data')
+    if not simObj or not simObj.actor.GetUserTransform():
+        return
+
+    obj = om.findObjectByName('blue funnel')
+    obj.getChildFrame().copyFrame(simObj.actor.GetUserTransform())
+
+
+syncTimer = TimerCallback(callback=syncFunnel)
+syncTimer.start()
 
 applogic.resetCamera(viewDirection=[-1,1,-0.5], view=view)

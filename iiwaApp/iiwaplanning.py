@@ -3,6 +3,7 @@ import os
 from director import robotstate
 from director import drcargs
 from director.fieldcontainer import FieldContainer
+from director import filterUtils
 from director import transformUtils
 from director import ikplanner
 from director import ikconstraints
@@ -97,17 +98,21 @@ def planReachGoal(goalFrameName='reach goal', startPose=None, planTraj=True, int
 
     axisConstraint.tspan = np.linspace(0,1,10)
 
-    # allow sliding in Z axis of pinch frame
-    # not enabled because the move on line constraint
-    #p.lowerBound[2] = -0.02
-    #p.upperBound[2] = 0.02
+    isPregrasp = goalFrameName.startswith('pre')
+    #isPregrasp = False
 
     # adjust bounds of move on line constraint
-    axisConstraintTubeRadius = 0.0
+    axisConstraintTubeRadius = 0.1 if isPregrasp else 0.0
     axisConstraint.lowerBound[0] = -axisConstraintTubeRadius
     axisConstraint.lowerBound[0] = -axisConstraintTubeRadius
     axisConstraint.upperBound[1] = axisConstraintTubeRadius
     axisConstraint.upperBound[1] = axisConstraintTubeRadius
+
+    # allow sliding in Z axis of pinch frame
+    # this may be overruled by the line constraint
+    if isPregrasp:
+        p.lowerBound[2] = -0.02
+        p.upperBound[2] = 0.02
 
     # align the gripper pinch axis
     # with the Y axis of the goal frame
@@ -116,12 +121,12 @@ def planReachGoal(goalFrameName='reach goal', startPose=None, planTraj=True, int
     g.targetFrame = goalFrame
     g.targetAxis = [0,1,0]
     g.bodyAxis = list(graspOffsetFrame.TransformVector([0,1,0]))
-    g.coneThreshold = np.radians(0.0)
+    g.coneThreshold = np.radians(5.0) if isPregrasp else np.radians(0.0)
     g.tspan = [1.0, 1.0]
 
     # point the fingers along the X axis
     # of the goal frame
-    pinchPivotBound = np.radians(0)
+    pinchPivotBound = np.radians(20) if isPregrasp else np.radians(0)
     g2 = ikconstraints.WorldGazeDirConstraint()
     g2.linkName = endEffectorLinkName
     g2.targetFrame = goalFrame
@@ -328,9 +333,20 @@ def spawnBlueFunnel():
     obj.getChildFrame().copyFrame(t)
 
 
+def fitSelectedGeometryObject():
+    obj = om.getActiveObject()
+    t = obj.actor.GetUserTransform()
+    polyData = filterUtils.transformPolyData(obj.polyData, t)
+    obj = fitObjectFromPolyData(polyData)
+
+
 def fitObjectOnSupport():
 
     polyData = extractSearchRegionAboveSupport()
+    fitObjectFromPolyData(polyData)
+
+
+def fitObjectFromPolyData(polyData):
 
     origin, edges, wireframe = segmentation.getOrientedBoundingBox(polyData)
 
@@ -370,6 +386,7 @@ def fitObjectOnSupport():
     #obj.getChildFrame().setProperty('Visible', True)
     obj.setProperty('Surface Mode', 'Wireframe')
     obj.setProperty('Color', [1,0,0])
+    return obj
 
 
 def addGraspFrames(affordanceName='box'):

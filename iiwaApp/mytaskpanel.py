@@ -8,6 +8,7 @@ from director import vtkNumpy as vnp
 import director.vtkAll as vtk
 from director.debugVis import DebugData
 from director.ikparameters import IkParameters
+from director import pointpicker
 from director import segmentation
 
 from director.tasks import robottasks as rt
@@ -29,6 +30,7 @@ class MyPlanner(object):
         self.robotSystem = robotSystem
         self.robotModel = robotSystem.robotStateModel
         self.ikPlanner = robotSystem.ikPlanner
+        self.objectPicker = pointpicker.ObjectPicker(robotSystem.view)
 
     def reloadModule(self):
         import imp
@@ -43,6 +45,17 @@ class MyPlanner(object):
 
     def getGraspFrameSuffix(self):
         return self.graspFrameSuffix
+
+    def fitSimulationObject(self):
+
+        def onPick(objs):
+            om.setActiveObject(objs[0])
+            iiwaplanning.fitSelectedGeometryObject()
+
+        self.objectPicker.stop()
+        self.objectPicker.callbackFunc = onPick
+        self.objectPicker.start()
+
 
     def spawnObject(self):
         iiwaplanning.spawnAffordance(self.getAffordanceName())
@@ -179,6 +192,7 @@ class MyTaskPanel(TaskUserPanel):
         self.addManualSpacer()
         self.addManualButton('fit support', iiwaplanning.fitSupport)
         self.addManualButton('fit object', iiwaplanning.fitObjectOnSupport)
+        self.addManualButton('fit sim object', self.planner.fitSimulationObject)
         self.addManualButton('add grasp frames', self.planner.addGraspFrames)
         self.addManualButton('plan pregrasp', self.planner.planPreGrasp)
         self.addManualButton('plan grasp', self.planner.planGrasp)

@@ -411,6 +411,7 @@ class ObjectPicker(object):
         self.abortFunc = abortCallback
         self.hoverColor = hoverColor[0:3]
         self.hoverAlpha = hoverColor[3]
+        self.eventFilter = None
         self.pickedObj = None
         self.storedProps = {}
         self.clear()
@@ -434,7 +435,8 @@ class ObjectPicker(object):
         self.eventFilter.connect('handleEvent(QObject*, QEvent*)', self.onEvent)
 
     def removeEventFilter(self):
-        self.view.vtkWidget().removeEventFilter(self.eventFilter)
+        if self.eventFilter:
+            self.view.vtkWidget().removeEventFilter(self.eventFilter)
 
     def onEvent(self, obj, event):
 
