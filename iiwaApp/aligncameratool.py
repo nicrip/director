@@ -12,6 +12,7 @@ from director.debugVis import DebugData
 from director import viewbehaviors
 from director import vtkAll as vtk
 from director import vtkNumpy as vnp
+from director.shallowCopy import shallowCopy
 import numpy as np
 
 from director.tasks.taskuserpanel import ImageBasedAffordanceFit
@@ -20,12 +21,13 @@ import PythonQt
 from PythonQt import QtGui, QtCore
 
 
+distanceToMeshThreshold = 0.2
+
 class ImageFitter(ImageBasedAffordanceFit):
 
     def __init__(self, parent):
         ImageBasedAffordanceFit.__init__(self, imageView=parent.cameraView, numberOfPoints=3)
         self.parent = parent
-        self.points = None
         self.pointCloudObjectName = 'openni point cloud'
 
     def getPointCloud(self):
@@ -33,12 +35,14 @@ class ImageFitter(ImageBasedAffordanceFit):
         return obj.polyData if obj else vtk.vtkPolyData()
 
     def fit(self, polyData, points):
-        self.points = points
-        d = DebugData()
-        for p in points:
-            d.addSphere(p, radius=0.01)
-        vis.showPolyData(d.getPolyData(), 'image pick points', view=self.parent.view, color=[1,0,0])
-        self.parent.onImagePick()
+        self.parent.onImagePick(points)
+
+
+def makeDebugPoints(points, radius=0.01):
+    d = DebugData()
+    for p in points:
+        d.addSphere(p, radius=radius)
+    return shallowCopy(d.getPolyData())
 
 
 def computeLandmarkTransform(sourcePoints, targetPoints):
@@ -46,8 +50,8 @@ def computeLandmarkTransform(sourcePoints, targetPoints):
     Returns a vtkTransform for the transform sourceToTarget
     that can be used to transform the source points to the target.
     '''
-    sourcePoints = vnp.getVtkPointsFromNumpy(sourcePoints)
-    targetPoints = vnp.getVtkPointsFromNumpy(targetPoints)
+    sourcePoints = vnp.getVtkPointsFromNumpy(np.array(sourcePoints))
+    targetPoints = vnp.getVtkPointsFromNumpy(np.array(targetPoints))
 
     f = vtk.vtkLandmarkTransform()
     f.SetSourceLandmarks(sourcePoints)
@@ -62,16 +66,38 @@ def computeLandmarkTransform(sourcePoints, targetPoints):
     return t
 
 
+def computePointToSurfaceDistance(pointsPolyData, meshPolyData):
+
+    cl = vtk.vtkCellLocator()
+    cl.SetDataSet(meshPolyData)
+    cl.BuildLocator()
+
+    points = vnp.getNumpyFromVtk(pointsPolyData, 'Points')
+    dists = np.zeros(len(points))
+
+
+    closestPoint = np.zeros(3)
+    closestPointDist = vtk.mutable(0.0)
+    cellId = vtk.mutable(0)
+    subId = vtk.mutable(0)
+
+    for i in xrange(len(points)):
+        cl.FindClosestPoint(points[i], closestPoint, cellId, subId, closestPointDist)
+        dists[i] = closestPointDist
+
+    return np.sqrt(dists)
+
+
 class TestFitCamera(object):
 
     def __init__(self, robotSystem, cameraView):
 
         self.meshPoints = None
+        self.imagePoints = None
         self.cameraView = cameraView
 
         self.robotMesh = vtk.vtkPolyData()
         robotSystem.robotStateModel.model.getModelMesh(self.robotMesh)
-
 
         self.view = PythonQt.dd.ddQVTKWidgetView()
         vis.showPolyData(self.robotMesh, 'robot mesh', view=self.view)
@@ -99,30 +125,37 @@ class TestFitCamera(object):
         applogic.resetCamera(viewDirection=[0,1,0], view=self.view)
         applogic.setCameraTerrainModeEnabled(self.view, True)
 
-    def onImagePick(self):
+    def onImagePick(self, points):
+        self.imagePoints = np.array(points)
+        vis.showPolyData(makeDebugPoints(self.imagePoints), 'image pick points', color=[1,0,0], view=self.view)
         self.align()
 
     def onPickPoints(self, *points):
-
-        self.meshPoints = points
-
-        d = DebugData()
-        for p in points:
-            d.addSphere(p, radius=0.01)
-        vis.showPolyData(d.getPolyData(), 'mesh pick points', color=[0,1,0], view=self.view)
-
+        self.meshPoints = np.array(points)
+        vis.showPolyData(makeDebugPoints(self.meshPoints), 'mesh pick points', color=[0,1,0], view=self.view)
         self.align()
 
     def align(self):
-        if None in [self.meshPoints, self.imageFitter.points]:
+
+        if self.meshPoints is None or self.imagePoints is None:
             return
 
-        t1 = computeLandmarkTransform(self.imageFitter.points, self.meshPoints)
+
+
+        t1 = computeLandmarkTransform(self.imagePoints, self.meshPoints)
         polyData = filterUtils.transformPolyData(self.imageFitter.getPointCloud(), t1)
 
         vis.showPolyData(polyData, 'transformed pointcloud', view=self.view, colorByName='rgb_colors', visible=False)
+        vis.showPolyData(filterUtils.transformPolyData(makeDebugPoints(self.imagePoints), t1), 'transformed image pick points', color=[0,0,1], view=self.view)
 
-        polyData = segmentation.cropToBounds(polyData, vtk.vtkTransform(), [[-0.5,0.50],[-0.5,0.5],[0.13,1.5]])
+        polyData = segmentation.cropToBounds(polyData, vtk.vtkTransform(), [[-0.5,0.50],[-0.5,0.5],[0.03,1.5]])
+
+        #arrayName = 'distance_to_mesh'
+        #dists = computePointToSurfaceDistance(polyData, self.robotMesh)
+        #vnp.addNumpyToVtk(polyData, dists, arrayName)
+        #polyData = filterUtils.thresholdPoints(polyData, arrayName, [0.0, distanceToMeshThreshold])
+
+
         #polyData = segmentation.applyVoxelGrid(polyData, leafSize=0.01)
         #polyData = segmentation.applyEuclideanClustering(polyData, clusterTolerance=0.04)
         #polyData = segmentation.thresholdPoints(polyData, 'cluster_labels', [1,1])
@@ -130,6 +163,9 @@ class TestFitCamera(object):
         vis.showPolyData(polyData, 'filtered points for icp', color=[0,1,0], view=self.view, visible=False)
 
         t2 = segmentation.applyICP(polyData, self.robotMesh)
+
+        vis.showPolyData(filterUtils.transformPolyData(polyData, t2), 'filtered points after icp', color=[0,1,0], view=self.view, visible=False)
+
 
         cameraToWorld = transformUtils.concatenateTransforms([t1, t2])
         polyData = filterUtils.transformPolyData(self.imageFitter.getPointCloud(), cameraToWorld)
