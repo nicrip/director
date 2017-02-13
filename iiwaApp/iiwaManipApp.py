@@ -64,11 +64,12 @@ def setupKinect():
 
 
 def makeRobotSystem(view):
-    factory = robotsystem.RobotSystemFactory()
+
+    factory = robotsystem.ComponentFactory()
+    factory.register(robotsystem.RobotSystemFactory)
     options = factory.getDisabledOptions()
     factory.setDependentOptions(options, usePlannerPublisher=True, useTeleop=True, useSegmentation=True, useSegmentationAffordances=True)
     robotSystem = factory.construct(view=view, options=options)
-
 
     # use pydrake ik backend
     ikPlanner = robotSystem.ikPlanner
@@ -171,11 +172,10 @@ cameraView = newCameraView(imageManager)
 taskPanel = mytaskpanel.MyTaskPanel(robotSystem, cameraView)
 taskPanel.planner.openGripperFunc = gripperOpen
 taskPanel.planner.closeGripperFunc = gripperClose
-#taskPanel.widget.show()
 
-#robotSystem.teleopPanel.onPostureDatabaseClicked()
+
+robotSystem.playbackPanel.animateOnExecute = True
 robotSystem.ikPlanner.addPostureGoalListener(robotSystem.robotStateJointController)
-
 robotSystem.ikPlanner.getIkOptions().setProperty('Max joint degrees/s', 60)
 robotSystem.ikPlanner.getIkOptions().setProperty('Use pointwise', False)
 

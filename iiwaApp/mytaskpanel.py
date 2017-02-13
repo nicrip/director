@@ -202,7 +202,7 @@ class MyTaskPanel(TaskUserPanel):
                 addTask(rt.CheckPlanInfo(name='check manip plan info'))
             else:
                 addTask(rt.UserPromptTask(name='approve manip plan', message='Please approve manipulation plan.'))
-            addFunc('execute manip plan', self.drillDemo.commitManipPlan)
+            addFunc('execute manip plan', self.planner.commitManipPlan)
             addTask(rt.WaitForManipulationPlanExecution(name='wait for manip execution'))
             self.folder = prevFolder
 
