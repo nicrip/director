@@ -62,6 +62,24 @@ def setupKinect():
 #setupKinect()
 
 
+def setCameraToWorld(t):
+    cameraToWorldMsg = lcmframe.rigidTransformMessageFromFrame(cameraToWorld)
+    lcmUtils.publish('OPENNI_FRAME_LEFT_TO_LOCAL', cameraToWorldMsg)
+
+
+def getCameraToWorld():
+    cameraName = 'OPENNI_FRAME_LEFT_TO_LOCAL'
+    q = cameraview.imageManager.queue
+    utime = q.getCurrentImageTime(cameraName)
+    t = vtk.vtkTransform()
+    q.getTransform(cameraName, 'local', utime, cameraToLocal)
+    return t
+
+def setTfRootForCamera():
+    tfDepthToRoot = om.findObjectByName('camera_depth_optical_frame').transform
+    cameraToWorld = getCameraToWorld()
+
+
 
 def makeRobotSystem(view):
 

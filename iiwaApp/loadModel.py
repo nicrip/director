@@ -6,11 +6,7 @@ from director import transformUtils
 
 
 
-
-
-
-objectsRepo = '/home/pat/source/objects'
-
+objectsRepo = os.path.expanduser('~/catkin_ws/src/perception_deps/objects')
 
 
 def addModel(meshFile, frameName, modelName, rpyOffset):
@@ -30,9 +26,9 @@ def addModel(meshFile, frameName, modelName, rpyOffset):
         obj = om.findObjectByName(modelName)
         if not obj:
             return
-        modelToOilBottle = transformUtils.frameFromPositionAndRPY([0,0,0],rpyOffset)
-        oilBottleToWorld = getModelFrame().transform
-        t = transformUtils.concatenateTransforms([modelToOilBottle, oilBottleToWorld])
+        meshToModel = transformUtils.frameFromPositionAndRPY([0,0,0], rpyOffset)
+        modelToWorld = getModelFrame().transform
+        t = transformUtils.concatenateTransforms([meshToModel, modelToWorld])
         obj.getChildFrame().copyFrame(t)
 
     loadModel()
@@ -42,7 +38,7 @@ def addModel(meshFile, frameName, modelName, rpyOffset):
 #oilBottleRpy = [0,270,0]
 oilBottleRpy = [0,0,0]
 
-addModel('meshes/oil_bottle.stl', 'oilBottle', 'oil bottle model', rpyOffset=oilBottleRpy)
+#addModel('meshes/oil_bottle.stl', 'oilBottle', 'oil bottle model', rpyOffset=oilBottleRpy)
+#addModel('meshes/engine.stl', 'engine', 'engine model', rpyOffset=[0,0,0])
 
-addModel('meshes/engine.stl', 'engine', 'engine model', rpyOffset=[0,0,0])
-
+addModel('meshes/blue_funnel.stl', 'bfunnel', 'blue funnel', rpyOffset=[0,0,0])
