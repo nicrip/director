@@ -726,8 +726,8 @@ class IKPlanner(object):
         p.linkName = self.getHandLink()
         p.pointInLink = np.array(graspToHandLinkFrame.GetPosition())
         p.referenceFrame = targetFrame
-        p.lowerBound = [0.0, 0.0, np.nan]
-        p.upperBound = [0.0, 0.0, np.nan]
+        p.lowerBound = [0.0, 0.0, -np.linalg.norm(motionAxisInWorld)]
+        p.upperBound = [0.0, 0.0, 0.0]
         axisConstraint = p
 
         return positionConstraint, orientationConstraint, axisConstraint

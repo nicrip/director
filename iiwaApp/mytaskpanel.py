@@ -24,7 +24,8 @@ import iiwaplanning
 
 class MyPlanner(object):
 
-    def __init__(self, robotSystem):
+    def __init__(self, robotSystem, properties):
+        self.properties = properties
         self.robotSystem = robotSystem
         self.robotModel = robotSystem.robotStateModel
         self.ikPlanner = robotSystem.ikPlanner
@@ -37,14 +38,30 @@ class MyPlanner(object):
         iiwaplanning.fitObjectOnSupport()
         iiwaplanning.addGraspFrames()
 
+    def getAffordanceName(self):
+        return self.properties.getPropertyEnumValue('Affordance name')
+
+    def getGraspFrameSuffix(self):
+        return self.graspFrameSuffix
+
     def spawnObject(self):
-        iiwaplanning.spawnBox()
+        iiwaplanning.spawnAffordance(self.getAffordanceName())
+
+    def addGraspFrames(self):
+        iiwaplanning.addGraspFrames(self.getAffordanceName())
+        self.selectGraspFrameSuffix()
+
+    def selectGraspFrameSuffix(self):
+        costs = iiwaplanning.computeReachPlanCosts(self.getAffordanceName())
+        self.graspFrameSuffix = iiwaplanning.getBestGraspSuffix(costs)
 
     def planGrasp(self):
-        iiwaplanning.planReachGoal('grasp to world')
+        suffix = self.getGraspFrameSuffix()
+        iiwaplanning.planReachGoal('grasp to world%s' % suffix)
 
     def planPreGrasp(self):
-        iiwaplanning.planReachGoal('pregrasp to world')
+        suffix = self.getGraspFrameSuffix()
+        iiwaplanning.planReachGoal('pregrasp to world%s' % suffix)
 
     def commitManipPlan(self):
         self.robotSystem.manipPlanner.commitManipPlan(self.robotSystem.ikPlanner.lastManipPlan)
@@ -147,7 +164,7 @@ class MyTaskPanel(TaskUserPanel):
 
         iiwaplanning.init(robotSystem)
 
-        self.planner = MyPlanner(robotSystem)
+        self.planner = MyPlanner(robotSystem, self.params)
         self.fitter = ImageFitter(self.planner, imageView)
         self.initImageView(self.fitter.imageView)
 
@@ -162,7 +179,7 @@ class MyTaskPanel(TaskUserPanel):
         self.addManualSpacer()
         self.addManualButton('fit support', iiwaplanning.fitSupport)
         self.addManualButton('fit object', iiwaplanning.fitObjectOnSupport)
-        self.addManualButton('add grasp frames', iiwaplanning.addGraspFrames)
+        self.addManualButton('add grasp frames', self.planner.addGraspFrames)
         self.addManualButton('plan pregrasp', self.planner.planPreGrasp)
         self.addManualButton('plan grasp', self.planner.planGrasp)
         self.addManualSpacer()
@@ -173,7 +190,10 @@ class MyTaskPanel(TaskUserPanel):
 
 
     def addDefaultProperties(self):
-        self.params.addProperty('Bool Property', False)
+        affordanceNames = ['box', 'blue funnel']
+        self.params.addProperty('Affordance name', 0,
+            om.PropertyAttributes(enumNames=affordanceNames))
+
 
     def onPropertyChanged(self, propertySet, propertyName):
         pass

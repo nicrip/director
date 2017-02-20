@@ -19,3 +19,6 @@ def initCameraPose():
 
 
 initTfVis()
+
+t = transformUtils.frameFromPositionAndRPY([0.45,-1.38,0.3], [-90,-3,0])
+setCameraToWorld(t)

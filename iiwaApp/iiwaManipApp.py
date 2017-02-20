@@ -1,6 +1,7 @@
 import os
 import sys
 import time
+import copy
 import imp
 
 from director import lcmUtils
@@ -12,6 +13,8 @@ from director import cameraview
 from director import pydrakeik
 from director import packagepath
 from director import roboturdf
+from director import fieldcontainer
+from director import framevisualization
 from director import drcargs
 
 import mytaskpanel
@@ -62,22 +65,30 @@ def setupKinect():
 #setupKinect()
 
 
-def setCameraToWorld(t):
+def setCameraToWorld(cameraToWorld):
     cameraToWorldMsg = lcmframe.rigidTransformMessageFromFrame(cameraToWorld)
     lcmUtils.publish('OPENNI_FRAME_LEFT_TO_LOCAL', cameraToWorldMsg)
 
 
 def getCameraToWorld():
-    cameraName = 'OPENNI_FRAME_LEFT_TO_LOCAL'
+    cameraName = 'OPENNI_FRAME_LEFT'
     q = cameraview.imageManager.queue
     utime = q.getCurrentImageTime(cameraName)
     t = vtk.vtkTransform()
-    q.getTransform(cameraName, 'local', utime, cameraToLocal)
+    q.getTransform(cameraName, 'local', utime, t)
     return t
 
+
 def setTfRootForCamera():
-    tfDepthToRoot = om.findObjectByName('camera_depth_optical_frame').transform
+
+    tfVis.setTfToWorld(vtk.vtkTransform())
+
+    opticalToRoot = transformUtils.copyFrame(om.findObjectByName('camera_depth_optical_frame').transform)
+    rootToOptical = opticalToRoot.GetLinearInverse()
     cameraToWorld = getCameraToWorld()
+    t = transformUtils.concatenateTransforms([rootToOptical, cameraToWorld])
+    tfVis.setTfToWorld(t)
+
 
 
 
@@ -94,15 +105,20 @@ def makeRobotSystem(view):
     ikPlanner.planningMode = 'pydrake'
     ikPlanner.plannerPub._setupLocalServer()
 
+    # set default options
+    #robotSystem.playbackPanel.animateOnExecute = True
+    ikPlanner.addPostureGoalListener(robotSystem.robotStateJointController)
+    ikPlanner.getIkOptions().setProperty('Max joint degrees/s', 60)
+    ikPlanner.getIkOptions().setProperty('Use pointwise', False)
+
     return robotSystem
 
 
-
 def initImageManager():
-
     imageManager = cameraview.ImageManager()
     cameraview.imageManager = imageManager
     return imageManager
+
 
 def initDepthPointCloud(imageManager, view):
 
@@ -142,6 +158,7 @@ def sendGripperCommand(targetPositionMM, force):
 def gripperOpen():
     sendGripperCommand(100, 40)
 
+
 def gripperClose():
     sendGripperCommand(15, 40)
 
@@ -150,6 +167,7 @@ def onOpenTaskPanel():
     taskPanel.widget.show()
     taskPanel.widget.raise_()
 
+
 def onFitCamera():
     import aligncameratool
     imp.reload(aligncameratool)
@@ -157,61 +175,81 @@ def onFitCamera():
     alignmentTool = aligncameratool.main(robotSystem, newCameraView(imageManager))
 
 
-def setupToolbar():
+def setupToolBar():
     toolBar = applogic.findToolBar('Main Toolbar')
     #app.addToolBarAction(toolBar, 'Gripper Open', icon='', callback=gripperOpen)
     #app.addToolBarAction(toolBar, 'Gripper Close', icon='', callback=gripperClose)
     app.addToolBarAction(toolBar, 'Task Panel', icon='', callback=onOpenTaskPanel)
-
     app.addToolBarAction(toolBar, 'Fit Camera', icon='', callback=onFitCamera)
 
 
-##############################################
-
-
-packageMap = packagepath.PackageMap()
-packageMap.populateFromSearchPaths(os.path.dirname(drcargs.args().directorConfigFile))
-
-roboturdf.addPathsFromPackageMap(packageMap)
-
-robotSystem = makeRobotSystem(view)
-
-app.addWidgetToDock(robotSystem.teleopPanel.widget, QtCore.Qt.RightDockWidgetArea)
-app.addWidgetToDock(robotSystem.playbackPanel.widget, QtCore.Qt.BottomDockWidgetArea)
-
-applogic.resetCamera(viewDirection=[-1,0,0], view=view)
-
-setupToolbar()
-
-imageManager = initImageManager()
-openniDepthPointCloud = initDepthPointCloud(imageManager, view)
-cameraView = newCameraView(imageManager)
-
-taskPanel = mytaskpanel.MyTaskPanel(robotSystem, cameraView)
-taskPanel.planner.openGripperFunc = gripperOpen
-taskPanel.planner.closeGripperFunc = gripperClose
-
-
-robotSystem.playbackPanel.animateOnExecute = True
-robotSystem.ikPlanner.addPostureGoalListener(robotSystem.robotStateJointController)
-robotSystem.ikPlanner.getIkOptions().setProperty('Max joint degrees/s', 60)
-robotSystem.ikPlanner.getIkOptions().setProperty('Use pointwise', False)
+def addToolBarAction(name, callback):
+    toolBar = applogic.findToolBar('Main Toolbar')
+    app.addToolBarAction(toolBar, name, icon='', callback=callback)
 
 
 def showLinkFrame(name):
     obj = vis.updateFrame(robotSystem.robotStateModel.getLinkFrame(name), name, parent='link frames')
     obj.setProperty('Scale', 0.2)
 
-#showLinkFrame(robotSystem.ikPlanner.getHandLink())
 
 def plotPlan():
     robotSystem.planPlayback.plotPlan(robotSystem.manipPlanner.lastManipPlan)
 
-#mytaskpanel.iiwaplanning.spawnBox()
-#mytaskpanel.iiwaplanning.addGraspFrames()
-#mytaskpanel.iiwaplanning.planReachGoal('grasp to world', interactive=False)
+
+def setGripperJointPositions(robotModel, pos):
+    robotModel.model.setJointPositions(
+        [pos, pos],
+        ['wsg_50_finger_left_joint', 'wsg_50_finger_right_joint'])
 
 
-#from director import framevisualization
-#panel = framevisualization.FrameVisualizationPanel(view)
-#panel.widget.show()
+def reloadIiwaPlanning():
+    imp.reload(ip)
+
+
+#####################################################
+
+
+
+packageMap = packagepath.PackageMap()
+packageMap.populateFromSearchPaths(os.path.dirname(drcargs.args().directorConfigFile))
+roboturdf.addPathsFromPackageMap(packageMap)
+
+robotSystem = makeRobotSystem(view)
+
+imageManager = initImageManager()
+openniDepthPointCloud = initDepthPointCloud(imageManager, view)
+cameraView = newCameraView(imageManager)
+
+
+panel = framevisualization.FrameVisualizationPanel(view)
+app.addWidgetToDock(panel.widget, QtCore.Qt.RightDockWidgetArea).hide()
+app.addWidgetToDock(robotSystem.teleopPanel.widget, QtCore.Qt.RightDockWidgetArea).hide()
+app.addWidgetToDock(robotSystem.playbackPanel.widget, QtCore.Qt.BottomDockWidgetArea).hide()
+setupToolBar()
+
+
+app.restoreDefaultWindowState()
+app.initWindowSettings()
+
+
+taskPanel = mytaskpanel.MyTaskPanel(robotSystem, cameraView)
+taskPanel.planner.openGripperFunc = gripperOpen
+taskPanel.planner.closeGripperFunc = gripperClose
+
+
+setGripperJointPositions(robotSystem.robotStateModel, 0.04)
+setGripperJointPositions(robotSystem.teleopRobotModel, 0.04)
+setGripperJointPositions(robotSystem.playbackRobotModel, 0.04)
+
+ip = mytaskpanel.iiwaplanning
+
+
+affordanceName = 'blue funnel'
+ip.spawnAffordance(affordanceName)
+ip.addGraspFrames(affordanceName)
+ip.makeBestPlan(affordanceName)
+addToolBarAction('Random test', ip.randomTest)
+
+
+applogic.resetCamera(viewDirection=[-1,1,-0.5], view=view)

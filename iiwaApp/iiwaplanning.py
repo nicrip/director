@@ -1,8 +1,12 @@
+import os
+
 from director import robotstate
 from director import drcargs
+from director.fieldcontainer import FieldContainer
 from director import transformUtils
 from director import ikplanner
 from director import ikconstraints
+from director import lcmUtils
 from director import segmentation
 from director import visualization as vis
 from director import objectmodel as om
@@ -13,15 +17,31 @@ import numpy as np
 
 
 
-def loadFunnelMesh():
-    om.removeFromObjectModel(om.findObjectByName('blue_funnel'))
+def loadMomapModel(name, meshFile):
+    momapObjectsRepo = os.path.expanduser('~/catkin_ws/src/perception_deps/objects')
+    meshFileName = os.path.join(momapObjectsRepo, meshFile)
 
-    funnelToWorld = transformUtils.frameFromPositionAndRPY([0.5,0,0.5],[-90,0,0])
+    return affordanceManager.newAffordanceFromDescription(
+      dict(classname='MeshAffordanceItem', Name=name,
+           pose=transformUtils.poseFromTransform(vtk.vtkTransform()),
+           Filename=meshFileName))
 
-    affordanceManager.newAffordanceFromDescription(
-      dict(classname='MeshAffordanceItem', Name='blue_funnel',
-           pose=transformUtils.poseFromTransform(funnelToWorld),
-           Filename='/home/pat/Desktop/blue_funnel.stl'))
+
+def loadBlueFunnel():
+    obj = loadMomapModel('blue funnel', 'meshes/blue_funnel.stl')
+    setupTfFrameSync(obj, 'bfunnel')
+    return obj
+
+
+def setupTfFrameSync(obj, frameName):
+
+    folder = om.findObjectByName('tf')
+    if not folder:
+        return
+
+    frame = folder.findChild('bfunnel')
+    obj.getChildFrame().copyFrame(frame.transform)
+    obj.getChildFrame().getFrameSync().addFrame(frame)
 
 
 
@@ -39,6 +59,13 @@ def planNominalPosture():
     ikPlanner.computePostureGoal(startPose, endPose)
 
 
+def getEndEffectorLinkName():
+
+    config = drcargs.getDirectorConfig()['endEffectorConfig']
+    linkName = config['endEffectorLinkNames'][0]
+    assert linkName == ikPlanner.getHandLink()
+    return linkName
+
 def getGraspToHandLink():
     config = drcargs.getDirectorConfig()['endEffectorConfig']
     return transformUtils.frameFromPositionAndRPY(
@@ -47,17 +74,17 @@ def getGraspToHandLink():
 
 _callbackId = None
 
-def planReachGoal(goalFrameName='reach goal', interactive=False):
+def planReachGoal(goalFrameName='reach goal', startPose=None, planTraj=True, interactive=False):
 
     goalFrame = om.findObjectByName(goalFrameName).transform
     startPoseName = 'reach_start'
     endPoseName = 'reach_end'
 
-    endEffectorLinkName = 'iiwa_link_ee'
+    endEffectorLinkName = getEndEffectorLinkName()
     graspOffsetFrame = getGraspToHandLink()
 
-
-    startPose = robotSystem.planningUtils.getPlanningStartPose()
+    if startPose is None:
+        startPose = robotSystem.planningUtils.getPlanningStartPose()
     ikPlanner.addPose(startPose, startPoseName)
 
     constraints = []
@@ -66,20 +93,52 @@ def planReachGoal(goalFrameName='reach goal', interactive=False):
     p.tspan = [1.0, 1.0]
     q.tspan = [1.0, 1.0]
 
+    _, _, axisConstraint = ikPlanner.createMoveOnLineConstraints(startPose, goalFrame, graspOffsetFrame)
 
+    axisConstraint.tspan = np.linspace(0,1,10)
+
+    # allow sliding in Z axis of pinch frame
+    # not enabled because the move on line constraint
+    #p.lowerBound[2] = -0.02
+    #p.upperBound[2] = 0.02
+
+    # adjust bounds of move on line constraint
+    axisConstraintTubeRadius = 0.0
+    axisConstraint.lowerBound[0] = -axisConstraintTubeRadius
+    axisConstraint.lowerBound[0] = -axisConstraintTubeRadius
+    axisConstraint.upperBound[1] = axisConstraintTubeRadius
+    axisConstraint.upperBound[1] = axisConstraintTubeRadius
+
+    # align the gripper pinch axis
+    # with the Y axis of the goal frame
     g = ikconstraints.WorldGazeDirConstraint()
     g.linkName = endEffectorLinkName
     g.targetFrame = goalFrame
     g.targetAxis = [0,1,0]
     g.bodyAxis = list(graspOffsetFrame.TransformVector([0,1,0]))
-    g.coneThreshold = 0.0
+    g.coneThreshold = np.radians(0.0)
     g.tspan = [1.0, 1.0]
+
+    # point the fingers along the X axis
+    # of the goal frame
+    pinchPivotBound = np.radians(0)
+    g2 = ikconstraints.WorldGazeDirConstraint()
+    g2.linkName = endEffectorLinkName
+    g2.targetFrame = goalFrame
+    g2.targetAxis = [1,0,0]
+    g2.bodyAxis = list(graspOffsetFrame.TransformVector([1,0,0]))
+    g2.coneThreshold = pinchPivotBound
+    g2.tspan = [1.0, 1.0]
 
 
     constraints.append(p)
     constraints.append(g)
+    constraints.append(g2)
+    constraints.append(axisConstraint)
 
     constraintSet = ikplanner.ConstraintSet(ikPlanner, constraints, endPoseName, startPoseName)
+
+    constraintSet.ikParameters.usePointwise = True
 
     global _callbackId
     #if _callbackId:
@@ -95,9 +154,51 @@ def planReachGoal(goalFrameName='reach goal', interactive=False):
 
     else:
 
-        robotSystem.teleopPanel.hideTeleopModel()
-        constraintSet.runIk()
-        print constraintSet.runIkTraj()
+        endPose, info = constraintSet.runIk()
+
+        if planTraj:
+            robotSystem.teleopPanel.hideTeleopModel()
+            return constraintSet.runIkTraj()
+        else:
+            return endPose, info
+
+
+def getLinkFrameSamplesFromPlan(plan, linkName, numberOfSamples=30):
+
+    poseTimes, poses = robotSystem.planPlayback.getPlanPoses(plan)
+    poseInterpolator = robotSystem.planPlayback.getPoseInterpolator(poseTimes, poses)
+
+    sampleTimes = np.linspace(poseTimes[0], poseTimes[-1], numberOfSamples)
+
+    frames = []
+    for sampleTime in sampleTimes:
+        pose = poseInterpolator(sampleTime)
+        linkFrame = ikPlanner.getLinkFrameAtPose(linkName, pose)
+        frames.append(linkFrame)
+
+    return frames
+
+
+def drawEndEffectorTrajFromPlan(plan=None):
+
+    if plan is None:
+        plan = robotSystem.ikPlanner.lastManipPlan
+    linkName = getEndEffectorLinkName()
+
+    frames = getLinkFrameSamplesFromPlan(plan, linkName)
+
+    pointInFrame = np.array(getGraspToHandLink().GetPosition())
+
+    pts = []
+    for f in frames:
+        p = np.array(f.TransformPoint(pointInFrame))
+        pts.append(p)
+
+    d = DebugData()
+    for p1, p2 in zip(pts, pts[1:]):
+        d.addLine(p1, p2)
+
+    vis.updatePolyData(d.getPolyData(), 'end effector traj', parent='debug')
 
 
 def showDebugPoint(p, name='debug point', update=False, visible=True):
@@ -130,9 +231,6 @@ def makeBox():
 def getPointCloud(name='openni point cloud'):
     obj = om.findObjectByName(name)
     return obj.polyData if obj else vtk.vtkPolyData()
-
-
-
 
 
 def addHSVArrays(polyData, rgbArrayName='rgb_colors'):
@@ -200,16 +298,34 @@ def extractSearchRegionAboveSupport():
     return polyData
 
 
+def spawnAffordance(affordanceName):
+    dispatch = {
+        'box' : spawnBox,
+        'blue funnel' : spawnBlueFunnel
+        }
+    dispatch[affordanceName]()
+
+
 def spawnBox():
 
-    t = transformUtils.frameFromPositionAndRPY([0.5,0.0,0.5], [-20,30,0])
+    t = transformUtils.frameFromPositionAndRPY([0.5,0.0,0.5], [0,0,0])
 
     om.removeFromObjectModel(om.findObjectByName('box'))
     obj = makeBox()
     obj.setProperty('Dimensions', [0.06, 0.04, 0.12])
-    obj.getChildFrame().copyFrame(t)
     #obj.setProperty('Surface Mode', 'Wireframe')
     obj.setProperty('Color', [1,0,0])
+    obj.getChildFrame().copyFrame(t)
+
+
+def spawnBlueFunnel():
+
+    t = transformUtils.frameFromPositionAndRPY([0.5,-0.25,0.2], [-90,0,0])
+
+    om.removeFromObjectModel(om.findObjectByName('blue funnel'))
+    obj = loadBlueFunnel()
+    obj.setProperty('Color', [0.0, 0.5, 1.0])
+    obj.getChildFrame().copyFrame(t)
 
 
 def fitObjectOnSupport():
@@ -256,28 +372,66 @@ def fitObjectOnSupport():
     obj.setProperty('Color', [1,0,0])
 
 
+def addGraspFrames(affordanceName='box'):
+    dispatch = {
+        'box' : addBoxGraspFrames,
+        'blue funnel' : addFunnelGraspFrames
+        }
+    dispatch[affordanceName]()
 
-def addGraspFrames():
 
-    obj = om.findObjectByName('box')
-    om.removeFromObjectModel(obj.findChild('grasp to world'))
-    om.removeFromObjectModel(obj.findChild('pregrasp to world'))
+def makeGraspFrames(obj, graspOffset, pregraspOffset=-0.08, suffix=''):
 
-    dims = obj.getProperty('Dimensions')
-
+    pos, rpy = graspOffset
     objectToWorld = obj.getChildFrame().transform
-
-    graspToObject = transformUtils.frameFromPositionAndRPY([0.0,0.0,dims[2]/2.0 - 0.025], [0,50,0])
-    preGraspToGrasp = transformUtils.frameFromPositionAndRPY([-0.08, 0.0, 0.0], [0,0,0])
-
+    graspToObject = transformUtils.frameFromPositionAndRPY(pos, rpy)
+    preGraspToGrasp = transformUtils.frameFromPositionAndRPY([pregraspOffset, 0.0, 0.0], [0,0,0])
     graspToWorld = transformUtils.concatenateTransforms([graspToObject, objectToWorld])
     preGraspToWorld = transformUtils.concatenateTransforms([preGraspToGrasp, graspToWorld])
 
-    graspFrame = vis.updateFrame(graspToWorld, 'grasp to world', scale=0.1, parent=obj, visible=False)
-    obj.getChildFrame().getFrameSync().addFrame(graspFrame, ignoreIncoming=True)
+    graspFrameName = 'grasp to world%s' % suffix
+    pregraspFrameName = 'pregrasp to world%s' % suffix
 
-    preGraspFrame = vis.updateFrame(preGraspToWorld, 'pregrasp to world', scale=0.1, parent=obj, visible=False)
+    om.removeFromObjectModel(obj.findChild(graspFrameName))
+    om.removeFromObjectModel(obj.findChild(pregraspFrameName))
+
+    graspFrame = vis.showFrame(graspToWorld, graspFrameName, scale=0.1, parent=obj, visible=False)
+    preGraspFrame = vis.showFrame(preGraspToWorld, pregraspFrameName, scale=0.1, parent=obj, visible=False)
+
+    obj.getChildFrame().getFrameSync().addFrame(graspFrame, ignoreIncoming=True)
     graspFrame.getFrameSync().addFrame(preGraspFrame, ignoreIncoming=True)
+
+
+def addFunnelGraspFrames():
+
+    obj = om.findObjectByName('blue funnel')
+
+    # y axis points down into the funnel
+    # x/z axes points along funnel width/length dimensions
+    originToPinch = -0.05
+    graspOffsets = [
+        ([-0.04, originToPinch, 0.0], [0,0,90]),
+        ([-0.04, originToPinch, 0.0], [180,0,90]),
+
+        ([0.04, originToPinch, 0.0], [180,0,90]),
+        ([0.04, originToPinch, 0.0], [0,0,90]),
+
+        ([0.0, originToPinch, -0.07], [-90,0,90]),
+        ([0.0, originToPinch, -0.07], [90,0,90]),
+
+        ([0.0, originToPinch, 0.07], [90,0,90]),
+        ([0.0, originToPinch, 0.07], [-90,0,90]),
+        ]
+
+    for i, graspOffset in enumerate(graspOffsets):
+        makeGraspFrames(obj, graspOffset, suffix=' %d' % i)
+
+
+def addBoxGraspFrames():
+    obj = om.findObjectByName('box')
+    dims = obj.getProperty('Dimensions')
+    graspOffset = ([0.0, 0.0, dims[2]/2.0 - 0.025], [0,50,0])
+    makeGraspFrames(obj, graspOffset)
 
 
 def init(robotSystem_):
@@ -289,11 +443,123 @@ def init(robotSystem_):
     newAffordanceFromDescription = robotSystem.affordanceManager.newAffordanceFromDescription
 
 
-#init(robotSystem)
-#fitSupport()
-#showDebugPoint(getSupportSearchPoint())
 
-#fitObjectOnSupport()
-#addGraspFrames()
-#vis.updatePolyData(extractSearchRegionAboveSupport(), name='search region', color=[0,1,0])
+#############################
 
+
+def computePoseCost(pose):
+    return np.linalg.norm(robotSystem.ikPlanner.jointController.getPose('q_nom') - pose)
+
+
+def computeReachPlanCost(suffix):
+
+    goalNames = ['pregrasp to world%s' % suffix,
+                 'grasp to world%s' % suffix]
+
+    endPose = None
+    isFeasible = True
+    cost = 0.0
+    for goalName in goalNames:
+        endPose, info = planReachGoal(goalName, startPose=endPose, planTraj=False)
+        cost += computePoseCost(endPose)
+        if not robotSystem.planPlayback.isPlanInfoFeasible(info):
+            isFeasible = False
+
+    return FieldContainer(cost=cost, isFeasible=isFeasible, endPose=endPose)
+
+
+def getGraspFrameSuffixes(affordanceName):
+
+    obj = om.findObjectByName(affordanceName)
+
+    suffixes = []
+    prefix = 'grasp to world'
+
+    for child in obj.children():
+        name = child.getProperty('Name')
+        if name.startswith(prefix):
+            suffixes.append(name[len(prefix):])
+
+    return suffixes
+
+
+def computeReachPlanCosts(affordanceName):
+
+    suffixes = getGraspFrameSuffixes(affordanceName)
+    costs = {}
+    for suffix in suffixes:
+        costs[suffix] = computeReachPlanCost(suffix)
+    return costs
+
+
+def showCostResult(result):
+    print 'is feasible:', result.isFeasible
+    print 'cost:', result.cost
+    robotSystem.teleopPanel.showPose(result.endPose)
+
+
+def makeCombinedReachPlan(suffix=''):
+
+    goalNames = ['pregrasp to world%s' % suffix,
+                 'grasp to world%s' % suffix]
+
+    plans = []
+
+    for goalName in goalNames:
+
+        if plans:
+            _, poses = robotSystem.planPlayback.getPlanPoses(plans[-1])
+            startPose = poses[-1]
+        else:
+            startPose = None
+
+        plan = planReachGoal(goalName, startPose=startPose)
+        plans.append(plan)
+
+    plan = robotSystem.planPlayback.mergePlanMessages(plans)
+    lcmUtils.publish('CANDIDATE_MANIP_PLAN', plan)
+    drawEndEffectorTrajFromPlan(plan)
+
+
+def getBestGraspSuffix(costs):
+    sortedNames = sorted(costs.keys(), key=lambda x:costs[x].cost)
+    for suffix in sortedNames:
+        if costs[suffix].isFeasible:
+            break
+    else:
+        suffix = sortedNames[0]
+    return suffix
+
+def makeBestPlan(affordanceName):
+
+    costs = computeReachPlanCosts(affordanceName)
+    suffix = getBestGraspSuffix(costs)
+
+    if not costs[suffix].isFeasible:
+        robotSystem.playbackRobotModel.setProperty('Color', [1, 0.25, 0.25])
+    else:
+        robotSystem.playbackRobotModel.setProperty('Color', [1, 0.75, 0])
+
+    makeCombinedReachPlan(suffix)
+
+
+def moveFunnelRandomly():
+
+    xyz = [
+        np.random.uniform(0.25, 0.75),
+        np.random.uniform(-0.3, 0.3),
+        np.random.uniform(0.0, 0.5)]
+
+    rpy = [
+        np.random.uniform(-120, -60),
+        np.random.uniform(-30, 30),
+        np.random.uniform(-30, 30)]
+
+
+    t = transformUtils.frameFromPositionAndRPY(xyz, rpy)
+    om.findObjectByName('blue funnel').getChildFrame().copyFrame(t)
+
+
+def randomTest():
+    moveFunnelRandomly()
+    makeBestPlan('blue funnel')
