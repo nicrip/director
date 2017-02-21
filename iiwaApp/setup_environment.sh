@@ -1,6 +1,6 @@
 
 export DIRECTOR_BUILD=$HOME/source/director/build
-export DRAKE_BASE=$HOME/source/drake/drake
+export DRAKE_BASE=$(grep "DRAKE_SOURCE_DIR.*PATH" $DIRECTOR_BUILD/CMakeCache.txt | cut -d "=" -f 2)
 
 export LD_LIBRARY_PATH=$DIRECTOR_BUILD/install/lib:$DRAKE_BASE/build/install/lib
 export PYTHONPATH=$PYTHONPATH:$DIRECTOR_BUILD/install/lib/python2.7/dist-packages:$DRAKE_BASE/build/install/lib/python2.7/dist-packages

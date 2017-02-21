@@ -160,7 +160,7 @@ def gripperOpen():
 
 
 def gripperClose():
-    sendGripperCommand(15, 40)
+    sendGripperCommand(0, 40)
 
 
 def onOpenTaskPanel():

@@ -148,7 +148,7 @@ class TestFitCamera(object):
         vis.showPolyData(polyData, 'transformed pointcloud', view=self.view, colorByName='rgb_colors', visible=False)
         vis.showPolyData(filterUtils.transformPolyData(makeDebugPoints(self.imagePoints), t1), 'transformed image pick points', color=[0,0,1], view=self.view)
 
-        polyData = segmentation.cropToBounds(polyData, vtk.vtkTransform(), [[-0.5,0.50],[-0.5,0.5],[0.03,1.5]])
+        polyData = segmentation.cropToBounds(polyData, vtk.vtkTransform(), [[-0.5,0.50],[-0.3,0.3],[0.15,1.5]])
 
         #arrayName = 'distance_to_mesh'
         #dists = computePointToSurfaceDistance(polyData, self.robotMesh)
